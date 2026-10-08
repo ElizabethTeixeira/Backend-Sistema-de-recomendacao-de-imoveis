@@ -1,0 +1,129 @@
+// Schema do banco (PostgreSQL / Neon).
+// Modelos em português; no banco, tabelas e colunas ficam em snake_case português via @@map/@map.
+// A URL de conexão NÃO fica aqui: no Prisma 7 ela é definida em prisma.config.js (DATABASE_URL).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PapelUsuario {
+  cliente
+  corretor
+
+  @@map("papel_usuario")
+}
+
+enum StatusImovel {
+  ativo
+  inativo
+
+  @@map("status_imovel")
+}
+
+// Clientes e corretores ficam na mesma tabela (o administrador vive no .env, não no banco).
+// Assim o e-mail único entre os dois perfis é garantido pelo próprio banco, sem corrida entre tabelas.
+model Usuario {
+  id               Int          @id @default(autoincrement())
+  papel            PapelUsuario
+  nome             String       @db.VarChar(120)
+  email            String       @unique @db.VarChar(254)
+  telefone         String       @db.VarChar(11) // somente dígitos
+  cpf              String       @db.VarChar(11) // somente dígitos
+  dataNascimento   DateTime     @map("data_nascimento") @db.Date
+  senhaHash        String       @map("senha_hash") @db.VarChar(100)
+  creci            String?      @unique @db.VarChar(9) // somente corretor, ex.: 123456-PI
+  fotoTipoMime     String?      @map("foto_tipo_mime") @db.VarChar(20) // somente corretor
+  fotoDados        Bytes?       @map("foto_dados") // somente corretor
+  fotoAtualizadaEm DateTime?    @map("foto_atualizada_em") @db.Timestamptz(3)
+  // Incrementado em logout, troca de senha e redefinição pelo admin: invalida todos os JWTs emitidos antes.
+  versaoToken      Int          @default(0) @map("versao_token")
+  criadoEm         DateTime     @default(now()) @map("criado_em") @db.Timestamptz(3)
+  atualizadoEm     DateTime     @default(now()) @updatedAt @map("atualizado_em") @db.Timestamptz(3)
+
+  imoveis               Imovel[]
+  conversasComoCliente  Conversa[] @relation("ConversaCliente")
+  conversasComoCorretor Conversa[] @relation("ConversaCorretor")
+
+  @@unique([papel, cpf], map: "usuarios_papel_cpf_key")
+  @@index([papel, criadoEm], map: "usuarios_papel_criado_em_idx")
+  @@map("usuarios")
+}
+
+model Imovel {
+  id              Int          @id @default(autoincrement())
+  corretorId      Int          @map("corretor_id")
+  tipo            String       @db.VarChar(20)
+  bairro          String       @db.VarChar(80)
+  preco           Int // em reais inteiros
+  quartos         Int          @db.SmallInt
+  vagas           Int          @db.SmallInt
+  areaM2          Float        @map("area_m2")
+  status          StatusImovel @default(ativo)
+  caracteristicas String[]
+  criadoEm        DateTime     @default(now()) @map("criado_em") @db.Timestamptz(3)
+  atualizadoEm    DateTime     @default(now()) @updatedAt @map("atualizado_em") @db.Timestamptz(3)
+
+  corretor  Usuario      @relation(fields: [corretorId], references: [id], onDelete: Cascade)
+  fotos     ImovelFoto[]
+  conversas Conversa[]
+
+  @@index([status, criadoEm], map: "imoveis_status_criado_em_idx")
+  @@index([corretorId], map: "imoveis_corretor_id_idx")
+  @@map("imoveis")
+}
+
+// Os bytes ficam no banco porque o projeto não prevê storage externo.
+// O id é UUID: a URL pública da foto não é adivinhável (diferente de um id sequencial).
+model ImovelFoto {
+  id       String   @id @default(uuid()) @db.Uuid
+  imovelId Int      @map("imovel_id")
+  ordem    Int      @db.SmallInt // 0 = capa
+  tipoMime String   @map("tipo_mime") @db.VarChar(20)
+  tamanho  Int
+  dados    Bytes
+  criadoEm DateTime @default(now()) @map("criado_em") @db.Timestamptz(3)
+
+  imovel Imovel @relation(fields: [imovelId], references: [id], onDelete: Cascade)
+
+  @@index([imovelId, ordem], map: "imovel_fotos_imovel_id_ordem_idx")
+  @@map("imovel_fotos")
+}
+
+// Uma conversa por (imóvel, cliente). Se o imóvel for excluído, o histórico permanece
+// com imovel_id nulo (o front já exibe "Imóvel removido").
+model Conversa {
+  id           Int      @id @default(autoincrement())
+  imovelId     Int?     @map("imovel_id")
+  clienteId    Int      @map("cliente_id")
+  corretorId   Int      @map("corretor_id")
+  criadoEm     DateTime @default(now()) @map("criado_em") @db.Timestamptz(3)
+  atualizadoEm DateTime @default(now()) @map("atualizado_em") @db.Timestamptz(3)
+
+  imovel    Imovel?    @relation(fields: [imovelId], references: [id], onDelete: SetNull)
+  cliente   Usuario    @relation("ConversaCliente", fields: [clienteId], references: [id], onDelete: Cascade)
+  corretor  Usuario    @relation("ConversaCorretor", fields: [corretorId], references: [id], onDelete: Cascade)
+  mensagens Mensagem[]
+
+  @@unique([imovelId, clienteId], map: "conversas_imovel_id_cliente_id_key")
+  @@index([clienteId, atualizadoEm], map: "conversas_cliente_id_atualizado_em_idx")
+  @@index([corretorId, atualizadoEm], map: "conversas_corretor_id_atualizado_em_idx")
+  @@map("conversas")
+}
+
+model Mensagem {
+  id         Int          @id @default(autoincrement())
+  conversaId Int          @map("conversa_id")
+  remetente  PapelUsuario // quem escreveu; "lida" vale para o destinatário
+  texto      String       @db.VarChar(2000)
+  lida       Boolean      @default(false)
+  criadoEm   DateTime     @default(now()) @map("criado_em") @db.Timestamptz(3)
+
+  conversa Conversa @relation(fields: [conversaId], references: [id], onDelete: Cascade)
+
+  @@index([conversaId, criadoEm], map: "mensagens_conversa_id_criado_em_idx")
+  @@map("mensagens")
+}
