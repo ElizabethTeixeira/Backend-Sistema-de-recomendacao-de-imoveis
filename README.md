@@ -12,7 +12,8 @@ Requisitos: Node 20.19+ (testado no 24) e um banco no [Neon](https://neon.tech).
 
 ```bash
 npm install
-cp .env.example .env     # preencha DATABASE_URL, ADMIN_EMAIL e ADMIN_PASSWORD
+env     # preencha DATABASE_URL, ADMIN_EMAIL e ADMIN_PASSWORD 
+# Leia o env.txt e configure o seu .env
 npm run db:setup         # gera o client do Prisma e aplica as migrações no Neon
 npm run dev              # ou: npm start
 ```
