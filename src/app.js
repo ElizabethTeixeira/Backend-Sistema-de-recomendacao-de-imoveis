@@ -1,3 +1,4 @@
+import integracaoRotas from './rotas/integracaoRotas.js';
 import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
@@ -49,7 +50,7 @@ export function criarApp() {
     limitadorGlobal,
     rotas
   );
-
+  app.use('/api', integracaoRotas);
   app.use(rotaNaoEncontrada);
   app.use(tratadorErros);
 
